@@ -53,8 +53,8 @@ async def chat_completions(request: Request):
             else:
                 user_prompt = content
 
-        # فحص التست
-        if not image_base64 or len(image_base64).strip() < 10:
+        # التصحيح العبقري: فحص لو الصورة ممسوحة أو مبعوتة فاضية بدون تعليق الكود
+        if not image_base64 or len(str(image_base64).strip()) < 10:
             return {
                 "id": f"chatcmpl-{int(time.time())}",
                 "object": "chat.completion",
@@ -64,16 +64,19 @@ async def chat_completions(request: Request):
                 "usage": {"prompt_tokens": 5, "completion_tokens": 5, "total_tokens": 10}
             }
 
-        # تنظيف وفك تشفير الصورة
-        image_base64 = image_base64.replace("data:image/png;base64,", "").replace("data:image/jpeg;base64,", "").replace("data:image/jpg;base64,", "").strip()
+        # تنظيف وفك تشفير الصورة الحقيقية
+        image_base64 = str(image_base64).replace("data:image/png;base64,", "")
+        image_base64 = image_base64.replace("data:image/jpeg;base64,", "")
+        image_base64 = image_base64.replace("data:image/jpg;base64,", "")
+        image_base64 = image_base64.strip()
+
         image_bytes = base64.b64decode(image_base64)
         image = Image.open(io.BytesIO(image_bytes))
         
-        # تشغيل الموديل
+        # معالجة الصورة عبر الموديل السحابي الخاص بك
         encoded_image = model.encode_image(image)
         answer = model.query(encoded_image, user_prompt)["answer"]
         
-        # الـ JSON القياسي الكامل المتوافق 100% مع مكتبات OpenAI الرسمية
         return {
             "id": f"chatcmpl-{int(time.time())}",
             "object": "chat.completion",
@@ -91,7 +94,7 @@ async def chat_completions(request: Request):
                 }
             ],
             "usage": {
-                "prompt_tokens": len(user_prompt) // 4 + 1000,   # حساب تقديري للتوكنز عشان الـ Tool متضربش
+                "prompt_tokens": len(user_prompt) // 4 + 1000,
                 "completion_tokens": len(answer) // 4,
                 "total_tokens": (len(user_prompt) // 4 + 1000) + (len(answer) // 4)
             }
