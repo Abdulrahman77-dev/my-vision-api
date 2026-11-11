@@ -16,27 +16,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ⚠️ حط هنا توكن Hugging Face المجاني بتاعك (تقدر تضيف أكتر من توكن للتبديل التلقائي)
-HF_TOKENS = [
-    "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"
-]
-current_token_idx = 0
+# ⚠️ ضع بيانات حسابك في Cloudflare هنا
+CF_ACCOUNT_ID = "b1c768ceb00a58098802ee6b80a948aa"
+CF_API_TOKEN = "curl "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+  -H "Authorization: Bearer cfut_3GKQSspdDSfS1JIfYkhPXzMrvU4A3cAduGCKu9fc2f13311b""
 
-def get_hf_headers():
-    global current_token_idx
-    token = HF_TOKENS[current_token_idx % len(HF_TOKENS)]
-    current_token_idx += 1
-    return {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
+CF_BASE_URL = f"https://cloudflare.com{CF_ACCOUNT_ID}/ai/run"
+VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
+JSON_MODEL = "@cf/qwen/qwen2.5-72b-instruct"
 
-# الرابط الرسمي الموحد لـ Hugging Face Inference Providers
-HF_ROUTER_URL = "https://huggingface.co"
-
-# موديل رؤية مجاني وذكي جداً بيفهم الصور وبيطلع JSON سليم 100%
-VISION_JSON_MODEL = "Qwen/Qwen2.5-VL-7B-Instruct"
+HEADERS = {
+    "Authorization": f"Bearer {CF_API_TOKEN}",
+    "Content-Type": "application/json"
+}
 
 @app.options("/{catchall:path}")
 async def keep_alive_options():
@@ -85,41 +77,96 @@ async def chat_completions(request: Request):
     is_stream = body.get("stream", False)
     model_name = body.get("model", "moondream")
 
-    # فحص هل ده طلب Test فاضي (بدون صور)
-    has_image = False
-    if messages and isinstance(messages[-1].get("content"), list):
-        for item in messages[-1]["content"]:
-            if item.get("type") == "image_url":
-                has_image = True
-                break
+    user_prompt = ""
+    images_base64 = []
 
-    if not has_image:
+    if messages:
+        last_message = messages[-1]
+        content = last_message.get("content", "")
+
+        if isinstance(content, list):
+            for item in content:
+                if item.get("type") == "text":
+                    user_prompt = item.get("text")
+                elif item.get("type") == "image_url":
+                    url_data = item.get("image_url", {}).get("url", "")
+                    clean_b64 = url_data.split("base64,")[-1].strip()
+                    if clean_b64:
+                        images_base64.append(clean_b64)
+        else:
+            user_prompt = str(content)
+
+    # 1. طلب الـ Test
+    if not images_base64:
         final_answer = "OK"
     else:
-        # إضافة تعليمات صارمة في السيستم لضمان خروج JSON سليم يحتوي على sections
-        enhanced_messages = [
-            {
-                "role": "system",
-                "content": "You are a senior UX designer and strict JSON generator. Output ONLY valid raw JSON starting with { and ending with }, containing the exact 'sections' array requested. Do not use markdown code blocks."
-            }
-        ] + messages
-
-        hf_payload = {
-            "model": VISION_JSON_MODEL,
-            "messages": enhanced_messages,
-            "max_tokens": 4096,
-            "temperature": 0.7,
-            "stream": False
-        }
-
+        screen_descriptions = []
         async with httpx.AsyncClient(timeout=60.0) as client:
-            res = await client.post(HF_ROUTER_URL, json=hf_payload, headers=get_hf_headers())
-            print(f"🚨 HF Router Status: {res.status_code}")
+            # الطبقة الأولى: استخراج وصف كل سكرين باستخدام Llama 3.2 Vision
+            for idx, img_b64 in enumerate(images_base64):
+                vision_payload = {
+                    "prompt": "Analyze this UI/UX design screen in thorough detail. List all visible text, buttons, navigation elements, color hex codes, layout structure, and user flow.",
+                    "image": list(bytes.fromhex("")) if False else img_b64 # Cloudflare يقبل base64 مباشرة في صيغة OpenAI أو مصفوفة بايتات
+                }
+                # استخدام نقطة اتصال OpenAI المتوافقة داخل Cloudflare مباشرة للرؤية
+                v_openai_payload = {
+                    "model": VISION_MODEL,
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "Extract every visible text, UI component, color hex code, layout hierarchy, and UX purpose of this screen in detail."},
+                                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}}
+                            ]
+                        }
+                    ],
+                    "max_tokens": 1024
+                }
+                v_res = await client.post(
+                    f"https://cloudflare.com{CF_ACCOUNT_ID}/ai/v1/chat/completions",
+                    json=v_openai_payload,
+                    headers=HEADERS
+                )
+                print(f"🚨 CF Vision Status (Screen {idx+1}): {v_res.status_code}")
 
-            if res.status_code == 200:
-                res_data = res.json()
-                raw_text = res_data["choices"][0]["message"]["content"]
-                # تنظيف الرد واستخراج الـ JSON الصافي من أول { لآخر }
+                if v_res.status_code == 200:
+                    v_data = v_res.json()
+                    desc = v_data["choices"]["message"]["content"]
+                    screen_descriptions.append(f"--- Screen {idx+1} Details ---\n{desc}")
+                else:
+                    print(f"🚨 CF Vision Error: {v_res.text[:300]}")
+                    screen_descriptions.append(f"--- Screen {idx+1} ---\nClean modern UI screen.")
+
+            all_screens_text = "\n\n".join(screen_descriptions)
+
+            # الطبقة الثانية: بناء الـ JSON الصارم باستخدام Qwen 2.5 72B
+            combined_prompt = f"""{user_prompt}
+
+Here is the visual extraction of the uploaded UI screenshots:
+{all_screens_text}
+
+CRITICAL INSTRUCTION: Output ONLY valid raw JSON containing the exact "sections" array requested above. Start immediately with {{ and end with }}. No markdown."""
+
+            llm_payload = {
+                "model": JSON_MODEL,
+                "messages": [
+                    {"role": "system", "content": "You are a senior UX designer and strict JSON generator. Output valid parseable JSON only."},
+                    {"role": "user", "content": combined_prompt}
+                ],
+                "max_tokens": 4096,
+                "temperature": 0.7
+            }
+
+            llm_res = await client.post(
+                f"https://cloudflare.com{CF_ACCOUNT_ID}/ai/v1/chat/completions",
+                json=llm_payload,
+                headers=HEADERS
+            )
+            print(f"🚨 CF LLM Status: {llm_res.status_code}")
+
+            if llm_res.status_code == 200:
+                llm_data = llm_res.json()
+                raw_text = llm_data["choices"]["message"]["content"]
                 start_idx = raw_text.find("{")
                 end_idx = raw_text.rfind("}")
                 if start_idx != -1 and end_idx != -1:
@@ -128,8 +175,8 @@ async def chat_completions(request: Request):
                     final_answer = raw_text
                 print(f"🚨 Success JSON Preview: {final_answer[:200]}")
             else:
-                print(f"🚨 HF Error Body: {res.text[:500]}")
-                final_answer = json.dumps({"error": f"HF Router Error {res.status_code}", "details": res.text[:200]})
+                print(f"🚨 CF LLM Error: {llm_res.text[:300]}")
+                final_answer = json.dumps({"error": f"CF Error {llm_res.status_code}"})
 
     if is_stream:
         return StreamingResponse(
