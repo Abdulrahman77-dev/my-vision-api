@@ -16,9 +16,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# بياناتك متظبطة وجاهزة بالملّي
 CF_ACCOUNT_ID = "b1c768ceb00a58098802ee6b80a948aa"
 CF_API_TOKEN = "cfut_3GKQSspdDSfS1JIfYkhPXzMrvU4A3cAduGCKu9fc2f13311b"
+
+# تجميع الرابط برمجياً لمنع المتصفح من اختصاره
+BASE_HOST = "://cloudflare.com"
+TARGET_URL = f"https://{BASE_HOST}/client/v4/accounts/{CF_ACCOUNT_ID}/ai/v1/chat/completions"
 
 VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
 JSON_MODEL = "@cf/qwen/qwen2.5-72b-instruct"
@@ -94,16 +97,12 @@ async def chat_completions(request: Request):
         else:
             user_prompt = str(content)
 
-    # 1. طلب الـ Test
     if not images_base64:
         final_answer = "OK"
     else:
-        target_url = "https://cloudflare.com"
-        print(f"🚨 Connecting to URL: {target_url}")
-
+        print(f"🚨 Connecting to URL: {TARGET_URL}")
         screen_descriptions = []
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # الطبقة الأولى: تحليل السكرينات
             for idx, img_b64 in enumerate(images_base64):
                 v_openai_payload = {
                     "model": VISION_MODEL,
@@ -118,12 +117,12 @@ async def chat_completions(request: Request):
                     ],
                     "max_tokens": 1024
                 }
-                v_res = await client.post(target_url, json=v_openai_payload, headers=HEADERS)
+                v_res = await client.post(TARGET_URL, json=v_openai_payload, headers=HEADERS)
                 print(f"🚨 CF Vision Status (Screen {idx+1}): {v_res.status_code}")
 
                 if v_res.status_code == 200:
                     v_data = v_res.json()
-                    desc = v_data["choices"]["message"]["content"]
+                    desc = v_data["choices"][0]["message"]["content"]
                     screen_descriptions.append(f"--- Screen {idx+1} Details ---\n{desc}")
                 else:
                     print(f"🚨 CF Vision Error: {v_res.text[:300]}")
@@ -131,7 +130,6 @@ async def chat_completions(request: Request):
 
             all_screens_text = "\n\n".join(screen_descriptions)
 
-            # الطبقة الثانية: بناء الـ JSON
             combined_prompt = f"""{user_prompt}
 
 Here is the visual extraction of the uploaded UI screenshots:
@@ -149,12 +147,12 @@ CRITICAL INSTRUCTION: Output ONLY valid raw JSON containing the exact "sections"
                 "temperature": 0.7
             }
 
-            llm_res = await client.post(target_url, json=llm_payload, headers=HEADERS)
+            llm_res = await client.post(TARGET_URL, json=llm_payload, headers=HEADERS)
             print(f"🚨 CF LLM Status: {llm_res.status_code}")
 
             if llm_res.status_code == 200:
                 llm_data = llm_res.json()
-                raw_text = llm_data["choices"]["message"]["content"]
+                raw_text = llm_data["choices"][0]["message"]["content"]
                 start_idx = raw_text.find("{")
                 end_idx = raw_text.rfind("}")
                 if start_idx != -1 and end_idx != -1:
