@@ -5,7 +5,6 @@ import httpx
 import json
 import time
 import asyncio
-import base64
 
 app = FastAPI()
 
@@ -17,12 +16,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+CF_ACCOUNT_ID = "b1c768ceb00a58098802ee6b80a948aa"
 CF_API_TOKEN = "cfut_3GKQSspdDSfS1JIfYkhPXzMrvU4A3cAduGCKu9fc2f13311b"
 
-# فك تشفير الرابط جوه السيرفر عشان المتصفح مايقدرش يغيره وقت النسخ
-# ده هو: https://cloudflare.com
-ENCODED_URL = "aHR0cHM6Ly9hcGkuY2xvdWRmbGFyZS5jb20vY2xpZW50L3Y0L2FjY291bnRzL2IxYzc2OGNlYjAwYTU4MDk4ODAyZWU2YjgwYTk0OGFhL2FpL3YxL2NoYXQvY29tcGxldGlvbnM="
-TARGET_URL = base64.b64decode(ENCODED_URL).decode("utf-8")
+# بناء الرابط بطريقة آمنة تماماً ضد تعديل المتصفح
+PROTO = "https:"
+DOMAIN = "//://cloudflare.com"
+PATH = f"/client/v4/accounts/{CF_ACCOUNT_ID}/ai/v1/chat/completions"
+TARGET_URL = PROTO + DOMAIN + PATH
 
 VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
 JSON_MODEL = "@cf/qwen/qwen2.5-72b-instruct"
@@ -83,7 +84,7 @@ async def chat_completions(request: Request):
     images_base64 = []
 
     if messages:
-        last_message = messages[-1]
+        last_message = messages.pop()
         content = last_message.get("content", "")
 
         if isinstance(content, list):
@@ -92,16 +93,17 @@ async def chat_completions(request: Request):
                     user_prompt = item.get("text")
                 elif item.get("type") == "image_url":
                     url_data = item.get("image_url", {}).get("url", "")
-                    clean_b64 = url_data.split("base64,")[-1].strip()
+                    clean_b64 = url_data.split("base64,").pop().strip()
                     if clean_b64:
                         images_base64.append(clean_b64)
         else:
             user_prompt = str(content)
 
+    # 1. طلب الـ Test
     if not images_base64:
         final_answer = "OK"
     else:
-        print(f"🚨 Connecting to decoded URL: {TARGET_URL}")
+        print(f"🚨 TARGET_URL: {TARGET_URL}")
         screen_descriptions = []
         async with httpx.AsyncClient(timeout=60.0) as client:
             for idx, img_b64 in enumerate(images_base64):
@@ -123,7 +125,9 @@ async def chat_completions(request: Request):
 
                 if v_res.status_code == 200:
                     v_data = v_res.json()
-                    desc = v_data["choices"][0]["message"]["content"]
+                    choices_list = v_data.get("choices", [])
+                    first_choice = choices_list.pop(0) if choices_list else {}
+                    desc = first_choice.get("message", {}).get("content", "")
                     screen_descriptions.append(f"--- Screen {idx+1} Details ---\n{desc}")
                 else:
                     print(f"🚨 CF Vision Error: {v_res.text[:300]}")
@@ -153,7 +157,10 @@ CRITICAL INSTRUCTION: Output ONLY valid raw JSON containing the exact "sections"
 
             if llm_res.status_code == 200:
                 llm_data = llm_res.json()
-                raw_text = llm_data["choices"][0]["message"]["content"]
+                choices_list = llm_data.get("choices", [])
+                first_choice = choices_list.pop(0) if choices_list else {}
+                raw_text = first_choice.get("message", {}).get("content", "")
+                
                 start_idx = raw_text.find("{")
                 end_idx = raw_text.rfind("}")
                 if start_idx != -1 and end_idx != -1:
