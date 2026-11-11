@@ -16,9 +16,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ⚠️ اكتب الـ Account ID (32 حرف ورقم) والتوكن هنا بين علامات التنصيص
-CF_ACCOUNT_ID = "b1c768ceb00a58098802ee6b80a948aa".strip()
-CF_API_TOKEN = "cfut_3GKQSspdDSfS1JIfYkhPXzMrvU4A3cAduGCKu9fc2f13311b".strip()
+# بياناتك متظبطة وجاهزة بالملّي
+CF_ACCOUNT_ID = "b1c768ceb00a58098802ee6b80a948aa"
+CF_API_TOKEN = "cfut_3GKQSspdDSfS1JIfYkhPXzMrvU4A3cAduGCKu9fc2f13311b"
 
 VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
 JSON_MODEL = "@cf/qwen/qwen2.5-72b-instruct"
@@ -98,7 +98,7 @@ async def chat_completions(request: Request):
     if not images_base64:
         final_answer = "OK"
     else:
-        target_url = f"https://cloudflare.com{CF_ACCOUNT_ID}/ai/v1/chat/completions"
+        target_url = "https://cloudflare.com"
         print(f"🚨 Connecting to URL: {target_url}")
 
         screen_descriptions = []
