@@ -5,6 +5,7 @@ import httpx
 import json
 import time
 import asyncio
+import base64
 
 app = FastAPI()
 
@@ -16,12 +17,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-CF_ACCOUNT_ID = "b1c768ceb00a58098802ee6b80a948aa"
 CF_API_TOKEN = "cfut_3GKQSspdDSfS1JIfYkhPXzMrvU4A3cAduGCKu9fc2f13311b"
 
-# تجميع الرابط برمجياً لمنع المتصفح من اختصاره
-BASE_HOST = "://cloudflare.com"
-TARGET_URL = f"https://{BASE_HOST}/client/v4/accounts/{CF_ACCOUNT_ID}/ai/v1/chat/completions"
+# فك تشفير الرابط جوه السيرفر عشان المتصفح مايقدرش يغيره وقت النسخ
+# ده هو: https://cloudflare.com
+ENCODED_URL = "aHR0cHM6Ly9hcGkuY2xvdWRmbGFyZS5jb20vY2xpZW50L3Y0L2FjY291bnRzL2IxYzc2OGNlYjAwYTU4MDk4ODAyZWU2YjgwYTk0OGFhL2FpL3YxL2NoYXQvY29tcGxldGlvbnM="
+TARGET_URL = base64.b64decode(ENCODED_URL).decode("utf-8")
 
 VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
 JSON_MODEL = "@cf/qwen/qwen2.5-72b-instruct"
@@ -100,7 +101,7 @@ async def chat_completions(request: Request):
     if not images_base64:
         final_answer = "OK"
     else:
-        print(f"🚨 Connecting to URL: {TARGET_URL}")
+        print(f"🚨 Connecting to decoded URL: {TARGET_URL}")
         screen_descriptions = []
         async with httpx.AsyncClient(timeout=60.0) as client:
             for idx, img_b64 in enumerate(images_base64):
