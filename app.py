@@ -17,8 +17,8 @@ app.add_middleware(
 )
 
 # ⚠️ ضع بيانات حسابك في Cloudflare هنا
-CF_ACCOUNT_ID = "b1c768ceb00a58098802ee6b80a948aa"
-CF_API_TOKEN = "cfut_3GKQSspdDSfS1JIfYkhPXzMrvU4A3cAduGCKu9fc2f13311b"
+CF_ACCOUNT_ID = "b1c768ceb00a58098802ee6b80a948aa".strip()
+CF_API_TOKEN = "cfut_3GKQSspdDSfS1JIfYkhPXzMrvU4A3cAduGCKu9fc2f13311b".strip()
 
 CF_BASE_URL = f"https://cloudflare.com{CF_ACCOUNT_ID}/ai/run"
 VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
