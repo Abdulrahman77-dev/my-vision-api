@@ -20,10 +20,10 @@ CF_ACCOUNT_ID = "b1c768ceb00a58098802ee6b80a948aa"
 CF_API_TOKEN = "cfut_3GKQSspdDSfS1JIfYkhPXzMrvU4A3cAduGCKu9fc2f13311b"
 
 # بناء الرابط بطريقة آمنة تماماً ضد تعديل المتصفح
-PROTO = "https:"
-DOMAIN = "//://cloudflare.com"
+sub = "api"
+TARGET_URL = f"https://{sub}://"
 PATH = f"/client/v4/accounts/{CF_ACCOUNT_ID}/ai/v1/chat/completions"
-TARGET_URL = PROTO + DOMAIN + PATH
+
 
 VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
 JSON_MODEL = "@cf/qwen/qwen2.5-72b-instruct"
