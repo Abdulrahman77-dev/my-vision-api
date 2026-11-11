@@ -16,11 +16,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ⚠️ ضع بيانات حسابك في Cloudflare هنا
+# ⚠️ اكتب الـ Account ID (32 حرف ورقم) والتوكن هنا بين علامات التنصيص
 CF_ACCOUNT_ID = "b1c768ceb00a58098802ee6b80a948aa".strip()
 CF_API_TOKEN = "cfut_3GKQSspdDSfS1JIfYkhPXzMrvU4A3cAduGCKu9fc2f13311b".strip()
 
-CF_BASE_URL = f"https://cloudflare.com{CF_ACCOUNT_ID}/ai/run"
 VISION_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
 JSON_MODEL = "@cf/qwen/qwen2.5-72b-instruct"
 
@@ -99,15 +98,13 @@ async def chat_completions(request: Request):
     if not images_base64:
         final_answer = "OK"
     else:
+        target_url = f"https://cloudflare.com{CF_ACCOUNT_ID}/ai/v1/chat/completions"
+        print(f"🚨 Connecting to URL: {target_url}")
+
         screen_descriptions = []
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # الطبقة الأولى: استخراج وصف كل سكرين باستخدام Llama 3.2 Vision
+            # الطبقة الأولى: تحليل السكرينات
             for idx, img_b64 in enumerate(images_base64):
-                vision_payload = {
-                    "prompt": "Analyze this UI/UX design screen in thorough detail. List all visible text, buttons, navigation elements, color hex codes, layout structure, and user flow.",
-                    "image": list(bytes.fromhex("")) if False else img_b64 # Cloudflare يقبل base64 مباشرة في صيغة OpenAI أو مصفوفة بايتات
-                }
-                # استخدام نقطة اتصال OpenAI المتوافقة داخل Cloudflare مباشرة للرؤية
                 v_openai_payload = {
                     "model": VISION_MODEL,
                     "messages": [
@@ -121,11 +118,7 @@ async def chat_completions(request: Request):
                     ],
                     "max_tokens": 1024
                 }
-                v_res = await client.post(
-                    f"https://cloudflare.com{CF_ACCOUNT_ID}/ai/v1/chat/completions",
-                    json=v_openai_payload,
-                    headers=HEADERS
-                )
+                v_res = await client.post(target_url, json=v_openai_payload, headers=HEADERS)
                 print(f"🚨 CF Vision Status (Screen {idx+1}): {v_res.status_code}")
 
                 if v_res.status_code == 200:
@@ -138,7 +131,7 @@ async def chat_completions(request: Request):
 
             all_screens_text = "\n\n".join(screen_descriptions)
 
-            # الطبقة الثانية: بناء الـ JSON الصارم باستخدام Qwen 2.5 72B
+            # الطبقة الثانية: بناء الـ JSON
             combined_prompt = f"""{user_prompt}
 
 Here is the visual extraction of the uploaded UI screenshots:
@@ -156,11 +149,7 @@ CRITICAL INSTRUCTION: Output ONLY valid raw JSON containing the exact "sections"
                 "temperature": 0.7
             }
 
-            llm_res = await client.post(
-                f"https://cloudflare.com{CF_ACCOUNT_ID}/ai/v1/chat/completions",
-                json=llm_payload,
-                headers=HEADERS
-            )
+            llm_res = await client.post(target_url, json=llm_payload, headers=HEADERS)
             print(f"🚨 CF LLM Status: {llm_res.status_code}")
 
             if llm_res.status_code == 200:
@@ -175,7 +164,7 @@ CRITICAL INSTRUCTION: Output ONLY valid raw JSON containing the exact "sections"
                 print(f"🚨 Success JSON Preview: {final_answer[:200]}")
             else:
                 print(f"🚨 CF LLM Error: {llm_res.text[:300]}")
-                final_answer = json.dumps({"error": f"CF Error {llm_res.status_code}"})
+                final_answer = json.dumps({"error": f"CF Error {llm_res.status_code}", "details": llm_res.text[:200]})
 
     if is_stream:
         return StreamingResponse(
