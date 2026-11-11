@@ -20,8 +20,8 @@ CF_ACCOUNT_ID = "b1c768ceb00a58098802ee6b80a948aa"
 CF_API_TOKEN = "cfut_3GKQSspdDSfS1JIfYkhPXzMrvU4A3cAduGCKu9fc2f13311b"
 
 # بناء الرابط بطريقة آمنة تماماً ضد تعديل المتصفح
-sub = "api"
-TARGET_URL = f"https://{sub}://"
+parts = ["https", "://api.", "cloudflare", ".com/client/v4/accounts/", "b1c768ceb00a58098802ee6b80a948aa", "/ai/v1/chat/completions"]
+TARGET_URL = "".join(parts)
 PATH = f"/client/v4/accounts/{CF_ACCOUNT_ID}/ai/v1/chat/completions"
 
 
