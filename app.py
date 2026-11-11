@@ -16,7 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# حط هنا توكن Hugging Face المجاني بتاعك (تقدر تضيف أكتر من توكن في اللستة عشان تبدل بينهم)
+# ⚠️ حط هنا توكن Hugging Face المجاني بتاعك (يبدأ بـ hf_)
 HF_TOKENS = [
     "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"
 ]
@@ -31,10 +31,8 @@ def get_hf_headers():
         "Content-Type": "application/json"
     }
 
-# الطبقة الأولى: موديل الرؤية المجاني لوصف السكرينات
+# الروابط الرسمية المحدثة من Hugging Face Router
 VISION_MODEL_URL = "https://huggingface.co"
-
-# الطبقة الثانية: موديل نصي عملاق مجاني لبناء الـ JSON والـ Case Study بدقة
 TEXT_JSON_MODEL_URL = "https://huggingface.co"
 
 @app.options("/{catchall:path}")
@@ -54,8 +52,7 @@ async def stream_response_generator(text: str, model_name: str):
     }
     yield f"data: {json.dumps(first_chunk)}\n\n"
 
-    # تقسيم الرد لبلوكات متوسطة عشان السرعة
-    chunk_size = 50
+    chunk_size = 80
     for i in range(0, len(text), chunk_size):
         part = text[i:i+chunk_size]
         chunk = {
@@ -104,13 +101,13 @@ async def chat_completions(request: Request):
         else:
             user_prompt = str(content)
 
-    # 1. لو طلب Test (مفيهوش صور)
+    # 1. طلب الـ Test
     if not images_base64:
         final_answer = "OK"
     else:
-        # 2. الشغل الفعلي: الطبقة الأولى (Moondream يستخرج تفاصيل كل سكرين)
         screen_descriptions = []
-        async with httpx.AsyncClient(timeout=45.0) as client:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            # الطبقة الأولى: استخراج وصف السكرينات
             for idx, img_b64 in enumerate(images_base64):
                 vision_payload = {
                     "inputs": {
@@ -119,27 +116,30 @@ async def chat_completions(request: Request):
                     }
                 }
                 v_res = await client.post(VISION_MODEL_URL, json=vision_payload, headers=get_hf_headers())
+                print(f"🚨 Vision Layer Status (Screen {idx+1}): {v_res.status_code}")
+                
                 if v_res.status_code == 200:
                     v_data = v_res.json()
-                    desc = v_data[0].get("generated_text", "") if isinstance(v_data, list) else str(v_data)
+                    desc = v_data.get("generated_text", "") if isinstance(v_data, list) else str(v_data)
                     screen_descriptions.append(f"--- Screen {idx+1} Details ---\n{desc}")
                 else:
-                    screen_descriptions.append(f"--- Screen {idx+1} ---\nModern mobile/web UI screen with clean layout and interactive components.")
+                    print(f"🚨 Vision Error Body: {v_res.text[:300]}")
+                    screen_descriptions.append(f"--- Screen {idx+1} ---\nModern UI interface screen.")
 
             all_screens_text = "\n\n".join(screen_descriptions)
 
-            # 3. الطبقة الثانية (Qwen 2.5 72B يأخذ وصف السكرينات + برومبت الأداة ويبني الـ JSON المطلوب)
+            # الطبقة الثانية: بناء الـ JSON المطلوب للأداة
             combined_prompt = f"""{user_prompt}
 
-Here is the detailed visual extraction of the uploaded UI screenshots:
+Here is the visual extraction of the uploaded UI screenshots:
 {all_screens_text}
 
-CRITICAL INSTRUCTION: Output ONLY valid raw JSON matching the exact schema requested above. Do not write markdown blocks like ```json or any conversational text before/after the JSON."""
+CRITICAL INSTRUCTION: Output ONLY valid raw JSON containing the exact "sections" array requested above. Do not write markdown blocks like ```json or any conversational text."""
 
             llm_payload = {
                 "model": "Qwen/Qwen2.5-72B-Instruct",
                 "messages": [
-                    {"role": "system", "content": "You are an expert UX Designer and strict JSON generator. You always output valid, parseable JSON only."},
+                    {"role": "system", "content": "You are an expert UX Designer and strict JSON generator. You always output valid, parseable JSON starting with { and ending with }."},
                     {"role": "user", "content": combined_prompt}
                 ],
                 "max_tokens": 4096,
@@ -147,15 +147,21 @@ CRITICAL INSTRUCTION: Output ONLY valid raw JSON matching the exact schema reque
             }
 
             llm_res = await client.post(TEXT_JSON_MODEL_URL, json=llm_payload, headers=get_hf_headers())
+            print(f"🚨 LLM Layer Status: {llm_res.status_code}")
+            
             if llm_res.status_code == 200:
                 llm_data = llm_res.json()
-                final_answer = llm_data["choices"][0]["message"]["content"]
-                # تنظيف الرد من أي علامات Markdown عشان الأداة تقرأه كـ JSON صافي
-                final_answer = final_answer.replace("```json", "").replace("```", "").strip()
+                final_answer = llm_data["choices"]["message"]["content"]
+                # استخراج الـ JSON الصافي من أول { لآخر } لضمان عدم وجود أي نص زيادة
+                start_idx = final_answer.find("{")
+                end_idx = final_answer.rfind("}")
+                if start_idx != -1 and end_idx != -1:
+                    final_answer = final_answer[start_idx:end_idx+1]
+                print(f"🚨 Final JSON Preview: {final_answer[:200]}")
             else:
-                final_answer = json.dumps({"error": f"LLM Layer failed with status {llm_res.status_code}"})
+                print(f"🚨 LLM Error Body: {llm_res.text[:500]}")
+                final_answer = json.dumps({"error": f"LLM Layer failed: {llm_res.status_code}", "details": llm_res.text[:200]})
 
-    # إرجاع النتيجة للأداة (سواء Streaming أو عادي)
     if is_stream:
         return StreamingResponse(
             stream_response_generator(final_answer, model_name),
