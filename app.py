@@ -16,9 +16,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ⚠️ حط هنا توكن Hugging Face المجاني بتاعك (يبدأ بـ hf_)
+# ⚠️ حط هنا توكن Hugging Face المجاني بتاعك (تقدر تضيف أكتر من توكن للتبديل التلقائي)
 HF_TOKENS = [
-    "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"
+    "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"
 ]
 current_token_idx = 0
 
@@ -28,12 +28,15 @@ def get_hf_headers():
     current_token_idx += 1
     return {
         "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
 
-# الروابط الرسمية المحدثة من Hugging Face Router
-VISION_MODEL_URL = "https://huggingface.co"
-TEXT_JSON_MODEL_URL = "https://huggingface.co"
+# الرابط الرسمي الموحد لـ Hugging Face Inference Providers
+HF_ROUTER_URL = "https://huggingface.co"
+
+# موديل رؤية مجاني وذكي جداً بيفهم الصور وبيطلع JSON سليم 100%
+VISION_JSON_MODEL = "Qwen/Qwen2.5-VL-7B-Instruct"
 
 @app.options("/{catchall:path}")
 async def keep_alive_options():
@@ -52,7 +55,7 @@ async def stream_response_generator(text: str, model_name: str):
     }
     yield f"data: {json.dumps(first_chunk)}\n\n"
 
-    chunk_size = 80
+    chunk_size = 100
     for i in range(0, len(text), chunk_size):
         part = text[i:i+chunk_size]
         chunk = {
@@ -82,85 +85,51 @@ async def chat_completions(request: Request):
     is_stream = body.get("stream", False)
     model_name = body.get("model", "moondream")
 
-    user_prompt = ""
-    images_base64 = []
+    # فحص هل ده طلب Test فاضي (بدون صور)
+    has_image = False
+    if messages and isinstance(messages[-1].get("content"), list):
+        for item in messages[-1]["content"]:
+            if item.get("type") == "image_url":
+                has_image = True
+                break
 
-    if messages:
-        last_message = messages[-1]
-        content = last_message.get("content", "")
-
-        if isinstance(content, list):
-            for item in content:
-                if item.get("type") == "text":
-                    user_prompt = item.get("text")
-                elif item.get("type") == "image_url":
-                    url_data = item.get("image_url", {}).get("url", "")
-                    clean_b64 = url_data.split("base64,")[-1].strip()
-                    if clean_b64:
-                        images_base64.append(clean_b64)
-        else:
-            user_prompt = str(content)
-
-    # 1. طلب الـ Test
-    if not images_base64:
+    if not has_image:
         final_answer = "OK"
     else:
-        screen_descriptions = []
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            # الطبقة الأولى: استخراج وصف السكرينات
-            for idx, img_b64 in enumerate(images_base64):
-                vision_payload = {
-                    "inputs": {
-                        "image": img_b64,
-                        "text": "Describe every UI element, text, buttons, layout, colors, and user flow visible in this app/website screen in detail."
-                    }
-                }
-                v_res = await client.post(VISION_MODEL_URL, json=vision_payload, headers=get_hf_headers())
-                print(f"🚨 Vision Layer Status (Screen {idx+1}): {v_res.status_code}")
-                
-                if v_res.status_code == 200:
-                    v_data = v_res.json()
-                    desc = v_data.get("generated_text", "") if isinstance(v_data, list) else str(v_data)
-                    screen_descriptions.append(f"--- Screen {idx+1} Details ---\n{desc}")
-                else:
-                    print(f"🚨 Vision Error Body: {v_res.text[:300]}")
-                    screen_descriptions.append(f"--- Screen {idx+1} ---\nModern UI interface screen.")
-
-            all_screens_text = "\n\n".join(screen_descriptions)
-
-            # الطبقة الثانية: بناء الـ JSON المطلوب للأداة
-            combined_prompt = f"""{user_prompt}
-
-Here is the visual extraction of the uploaded UI screenshots:
-{all_screens_text}
-
-CRITICAL INSTRUCTION: Output ONLY valid raw JSON containing the exact "sections" array requested above. Do not write markdown blocks like ```json or any conversational text."""
-
-            llm_payload = {
-                "model": "Qwen/Qwen2.5-72B-Instruct",
-                "messages": [
-                    {"role": "system", "content": "You are an expert UX Designer and strict JSON generator. You always output valid, parseable JSON starting with { and ending with }."},
-                    {"role": "user", "content": combined_prompt}
-                ],
-                "max_tokens": 4096,
-                "temperature": 0.7
+        # إضافة تعليمات صارمة في السيستم لضمان خروج JSON سليم يحتوي على sections
+        enhanced_messages = [
+            {
+                "role": "system",
+                "content": "You are a senior UX designer and strict JSON generator. Output ONLY valid raw JSON starting with { and ending with }, containing the exact 'sections' array requested. Do not use markdown code blocks."
             }
+        ] + messages
 
-            llm_res = await client.post(TEXT_JSON_MODEL_URL, json=llm_payload, headers=get_hf_headers())
-            print(f"🚨 LLM Layer Status: {llm_res.status_code}")
-            
-            if llm_res.status_code == 200:
-                llm_data = llm_res.json()
-                final_answer = llm_data["choices"]["message"]["content"]
-                # استخراج الـ JSON الصافي من أول { لآخر } لضمان عدم وجود أي نص زيادة
-                start_idx = final_answer.find("{")
-                end_idx = final_answer.rfind("}")
+        hf_payload = {
+            "model": VISION_JSON_MODEL,
+            "messages": enhanced_messages,
+            "max_tokens": 4096,
+            "temperature": 0.7,
+            "stream": False
+        }
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            res = await client.post(HF_ROUTER_URL, json=hf_payload, headers=get_hf_headers())
+            print(f"🚨 HF Router Status: {res.status_code}")
+
+            if res.status_code == 200:
+                res_data = res.json()
+                raw_text = res_data["choices"][0]["message"]["content"]
+                # تنظيف الرد واستخراج الـ JSON الصافي من أول { لآخر }
+                start_idx = raw_text.find("{")
+                end_idx = raw_text.rfind("}")
                 if start_idx != -1 and end_idx != -1:
-                    final_answer = final_answer[start_idx:end_idx+1]
-                print(f"🚨 Final JSON Preview: {final_answer[:200]}")
+                    final_answer = raw_text[start_idx:end_idx+1]
+                else:
+                    final_answer = raw_text
+                print(f"🚨 Success JSON Preview: {final_answer[:200]}")
             else:
-                print(f"🚨 LLM Error Body: {llm_res.text[:500]}")
-                final_answer = json.dumps({"error": f"LLM Layer failed: {llm_res.status_code}", "details": llm_res.text[:200]})
+                print(f"🚨 HF Error Body: {res.text[:500]}")
+                final_answer = json.dumps({"error": f"HF Router Error {res.status_code}", "details": res.text[:200]})
 
     if is_stream:
         return StreamingResponse(
