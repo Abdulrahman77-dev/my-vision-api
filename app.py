@@ -17,7 +17,7 @@ app.add_middleware(
 )
 
 CF_ACCOUNT_ID = "b1c768ceb00a58098802ee6b80a948aa"
-CF_API_TOKEN = "cfut_3GKQSspdDSfS1JIfYkhPXzMrvU4A3cAduGCKu9fc2f13311b"
+CF_API_TOKEN = "cfut_SbWSY7tJBwCBaKMoCePCJlkn84MF6LcQncGareJz7cdfb216"
 
 # بناء الرابط بطريقة آمنة تماماً ضد تعديل المتصفح
 parts = ["https", "://api.", "cloudflare", ".com/client/v4/accounts/", "b1c768ceb00a58098802ee6b80a948aa", "/ai/v1/chat/completions"]
